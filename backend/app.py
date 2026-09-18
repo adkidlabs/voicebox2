@@ -112,7 +112,7 @@ from .services import tts, transcribe, llm
 from .database import get_db
 from .utils.platform_detect import get_backend_type
 from .utils.progress import get_progress_manager
-from .services.task_queue import create_background_task, init_queue
+from .services.task_queue import init_queue
 from .routes import register_routers
 
 
@@ -331,12 +331,6 @@ async def _run_startup(application: FastAPI) -> None:
     _compatible, _cuda_warning = check_cuda_compatibility()
     if not _compatible:
         logger.warning("GPU COMPATIBILITY: %s", _cuda_warning)
-
-    from .services.cuda import check_and_update_cuda_binary
-    from .services.rocm import check_and_update_rocm_binary
-
-    create_background_task(check_and_update_cuda_binary())
-    create_background_task(check_and_update_rocm_binary())
 
     try:
         progress_manager = get_progress_manager()

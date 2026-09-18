@@ -796,8 +796,12 @@
         "online": "Online"
       },
       "updates": {
-        "title": "App Updates",
-        "devSuffix": " (dev)",
+"title": "App Updates",
+ "devSuffix": " (dev)",
+ "disabled": {
+  "title": "Updates disabled",
+  "description": "This custom build has auto-updates removed."
+ },
         "devMode": {
           "title": "Development mode",
           "description": "Auto-updates are disabled in development mode."

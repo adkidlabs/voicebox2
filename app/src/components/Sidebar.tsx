@@ -1,11 +1,17 @@
 import { Link, useMatchRoute } from '@tanstack/react-router';
-import { AudioLines, Box, Captions, type LucideIcon, Mic, Settings, Volume2, Wand2 } from 'lucide-react';
-import { useEffect, useState } from 'react';
+import {
+  AudioLines,
+  Box,
+  Captions,
+  type LucideIcon,
+  Mic,
+  Settings,
+  Volume2,
+  Wand2,
+} from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import voiceboxLogo from '@/assets/voicebox-logo.png';
 import { cn } from '@/lib/utils/cn';
-import { usePlatform } from '@/platform/PlatformContext';
-import type { UpdateStatus } from '@/platform/types';
 import { usePlayerStore } from '@/stores/playerStore';
 import { version } from '../../package.json';
 
@@ -33,10 +39,6 @@ export function Sidebar({ isMacOS }: SidebarProps) {
   const { t } = useTranslation();
   const matchRoute = useMatchRoute();
   const isPlayerOpen = !!usePlayerStore((s) => s.audioUrl);
-  const platform = usePlatform();
-
-  const [updateStatus, setUpdateStatus] = useState<UpdateStatus>(platform.updater.getStatus());
-  useEffect(() => platform.updater.subscribe(setUpdateStatus), [platform.updater]);
 
   return (
     <div
@@ -97,14 +99,6 @@ export function Sidebar({ isMacOS }: SidebarProps) {
         style={{ paddingBottom: isPlayerOpen ? '7rem' : undefined }}
       >
         <span className="text-[10px] text-muted-foreground/50">v{version}</span>
-        {updateStatus.available && (
-          <Link
-            to="/settings"
-            className="text-[9px] font-semibold tracking-wide uppercase px-2 py-0.5 rounded-full bg-accent/15 text-accent hover:bg-accent/25 transition-colors"
-          >
-            {t('nav.updateBadge')}
-          </Link>
-        )}
       </div>
     </div>
   );

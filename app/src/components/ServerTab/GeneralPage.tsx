@@ -1,16 +1,14 @@
 import { zodResolver } from '@hookform/resolvers/zod';
-import { AlertCircle, ArrowUpRight, Book, Download, Loader2, RefreshCw } from 'lucide-react';
-import { useEffect, useMemo, useState } from 'react';
+import { ArrowUpRight, Book, Loader2 } from 'lucide-react';
+import { useEffect, useMemo } from 'react';
 import { useForm } from 'react-hook-form';
 import { Trans, useTranslation } from 'react-i18next';
 import * as z from 'zod';
 import { Button } from '@/components/ui/button';
 import { Form, FormControl, FormField, FormItem, FormMessage } from '@/components/ui/form';
 import { Input } from '@/components/ui/input';
-import { Progress } from '@/components/ui/progress';
 import { Toggle } from '@/components/ui/toggle';
 import { useToast } from '@/components/ui/use-toast';
-import { useAutoUpdater } from '@/hooks/useAutoUpdater';
 import { useServerHealth } from '@/lib/hooks/useServer';
 import { usePlatform } from '@/platform/PlatformContext';
 import { useServerStore } from '@/stores/serverStore';
@@ -266,115 +264,16 @@ function ConnectionStatus({
 
 function UpdatesSection() {
   const { t } = useTranslation();
-  const platform = usePlatform();
-  const { status, checkForUpdates, downloadAndInstall, restartAndInstall } = useAutoUpdater(false);
-  const [currentVersion, setCurrentVersion] = useState<string | null>('');
-  const isDev = !import.meta.env?.PROD;
-
-  useEffect(() => {
-    platform.metadata
-      .getVersion()
-      .then(setCurrentVersion)
-      .catch(() => setCurrentVersion(null));
-  }, [platform]);
-
-  const versionLabel = currentVersion ?? t('common.unknown');
 
   return (
     <SettingSection
       title={t('settings.general.updates.title')}
-      description={`v${versionLabel}${isDev ? t('settings.general.updates.devSuffix') : ''}`}
+      description={t('settings.general.updates.disabled.description')}
     >
-      {isDev ? (
-        <SettingRow
-          title={t('settings.general.updates.devMode.title')}
-          description={t('settings.general.updates.devMode.description')}
-        />
-      ) : (
-        <>
-          <SettingRow
-            title={t('settings.general.updates.check.title')}
-            description={
-              status.available
-                ? t('settings.general.updates.check.available', { version: status.version })
-                : status.checking
-                  ? t('settings.general.updates.check.checking')
-                  : t('settings.general.updates.check.upToDate')
-            }
-            action={
-              <Button
-                onClick={checkForUpdates}
-                disabled={status.checking || status.downloading || status.readyToInstall}
-                variant="outline"
-                size="sm"
-              >
-                <RefreshCw
-                  className={`h-3.5 w-3.5 mr-1.5 ${status.checking ? 'animate-spin' : ''}`}
-                />
-                {t('settings.general.updates.check.button')}
-              </Button>
-            }
-          />
-
-          {status.error && (
-            <SettingRow title={t('settings.general.updates.error')}>
-              <div className="flex items-center gap-2 text-sm text-destructive">
-                <AlertCircle className="h-4 w-4" />
-                {status.error}
-              </div>
-            </SettingRow>
-          )}
-
-          {status.available && !status.downloading && !status.readyToInstall && (
-            <SettingRow
-              title={t('settings.general.updates.download.title', { version: status.version })}
-              description={t('settings.general.updates.download.description')}
-              action={
-                <Button onClick={downloadAndInstall} size="sm">
-                  <Download className="h-3.5 w-3.5 mr-1.5" />
-                  {t('settings.general.updates.download.button')}
-                </Button>
-              }
-            />
-          )}
-
-          {status.downloading && (
-            <SettingRow title={t('settings.general.updates.downloading')}>
-              <div className="space-y-1.5">
-                <Progress value={status.downloadProgress} />
-                <div className="flex items-center justify-between text-xs text-muted-foreground">
-                  {status.downloadedBytes !== undefined &&
-                  status.totalBytes !== undefined &&
-                  status.totalBytes > 0 ? (
-                    <span>
-                      {(status.downloadedBytes / 1024 / 1024).toFixed(1)} MB /{' '}
-                      {(status.totalBytes / 1024 / 1024).toFixed(1)} MB
-                    </span>
-                  ) : (
-                    <span />
-                  )}
-                  {status.downloadProgress !== undefined && <span>{status.downloadProgress}%</span>}
-                </div>
-              </div>
-            </SettingRow>
-          )}
-
-          {status.readyToInstall && (
-            <SettingRow
-              title={t('settings.general.updates.ready.title')}
-              description={t('settings.general.updates.ready.description', {
-                version: status.version,
-              })}
-              action={
-                <Button onClick={restartAndInstall} size="sm">
-                  <RefreshCw className="h-3.5 w-3.5 mr-1.5" />
-                  {t('settings.general.updates.ready.button')}
-                </Button>
-              }
-            />
-          )}
-        </>
-      )}
+      <SettingRow
+        title={t('settings.general.updates.disabled.title')}
+        description={t('settings.general.updates.disabled.description')}
+      />
     </SettingSection>
   );
 }
