@@ -16,7 +16,7 @@ Companion doc: `CODEBASE_MAP.md` (full code understanding).
 
 ### Environment caveats found during recon
 
-1. **This working copy is NOT a git repo** (no `.git`). The spec's "commit each workstream" gate requires `git init` first, or the user must clone fresh. I've flagged this — do not surprise-commit until a repo exists.
+1. **Git**: repo now initialized (`main`, baseline `9d8778a`). Committing per workstream from here.
 2. **Spec path assumptions are wrong in two places** — the real codebase differs from the spec's assumed layout. Everything below uses real paths:
    - `backend/engines/` → actually `backend/backends/`
    - `src-tauri/` → actually `tauri/src-tauri/`
@@ -26,6 +26,20 @@ Companion doc: `CODEBASE_MAP.md` (full code understanding).
    - Both startup "call-home" tasks (`backend/app.py:338-339` → `check_and_update_cuda_binary()` / `check_and_update_rocm_binary()`) **early-return before any network I/O on macOS** — no CUDA dir exists (`cuda.py:412-414`) / no ROCm dir (`rocm.py:427-429`). Zero leaks.
    - Both manual endpoints (`POST /backend/download-cuda`, `POST /backend/download-rocm`) gate on Windows and raise `RuntimeError` elsewhere.
    - **Decision: CUDA/ROCm code gets NO work in this build.** Remove the startup tasks (dead code) and hide the Windows-only UI, but never build/download any CUDA/ROCm artefacts. M-series runs the PyTorch CPU+acclerate + MLX path only.
+
+---
+
+## Locked Decisions (confirmed with user, 2026-09-18)
+
+| Decision | State |
+|---|---|
+| **TADA engine** | **DROPPED** from the M1 build. Remove `tada` + `tada-3b-ml` from `TTS_ENGINES`, `_get_non_qwen_tts_configs`, `CLONING_ENGINES`, `EngineModelSelector`, preset routing. `hume-tada` wheel stays installed but unregistered — folded into W1. Prevents a 5-8GB model download. |
+| **Git** | **Init here** (done, `main` @ baseline commit). Per-workstream commits. |
+| **Voicebox Cloud** (`voicebox.sh`) | **KEEP** — user-initiated; outside W5 diff surface. |
+| **HF metadata lookup** (ModelManagement.tsx) | **KEEP** — display-only; outside W5 diff surface. |
+| **Env** | Python 3.12.8 arm64 venv at `backend/venv` verified: torch 2.14.0 (MPS ✅), mlx 0.32.2/mlx-lm 0.31.1/mlx-audio 0.4.1 ✅, transformers 4.57.3, librosa 0.11, kokoro/misaki 0.9.4, qwen-tts 0.1.1, chatterbox-tts 0.1.7, hume-tada 0.1.9. `dac_shim` handles the missing `dac` pkg at runtime. |
+
+> **W1 phase-0 blocker (still open):** need AUK + MOSS-TTS-Nano upstream repo/HF IDs before dependency audit.
 
 ---
 
@@ -117,7 +131,7 @@ Before any code:
 | Registry | new `backend/backends/registry.py` (`EngineAdapter` Protocol + `EngineDescriptor` + `EngineRegistry`) |
 | MOSS adapter | new `backend/backends/moss_tts_nano_backend.py` (TTSBackend impl OR registry adapter) |
 | AUK adapter | new `backend/backends/auk_backend.py` |
-| Per-engine adapters | one thin adapter class in each of the 7 existing backend files |
+| Per-engine adapters | one thin adapter class in each of the 6 existing kept backend files (TADA backend is dropped, gets no adapter) |
 | `/engines` route | new `backend/routes/engines.py`, registered in `backend/routes/__init__.py` (`register_routers`) |
 | Config metadata | `ModelConfig` entries + `TTS_ENGINES` + factory branches in `backend/backends/__init__.py` |
 | Request regex | `backend/models.py` engine regex (add `moss-tts-nano`, `auk`) |
@@ -132,9 +146,9 @@ Before any code:
 - Sample rate: MOSS is 48kHz stereo — confirm `save_audio`/audio pipeline handles stereo + non-24k without the `needs_trim` assumptions.
 
 ### Gates
-- `GET /engines` lists all 9+ engines (7 existing + 2 new) with correct metadata.
+- `GET /engines` lists all 8 engines (6 kept existing + 2 new) with correct metadata.
 - Fresh HF cache: download + clone + generate for MOSS and AUK.
-- Regression: Qwen3-TTS, CustomVoice, LuxTTS, Chatterbox, TADA, Kokoro still clone/generate identically.
+- Regression: Qwen3-TTS, CustomVoice, LuxTTS, Chatterbox, Chatterbox-Turbo, Kokoro still clone/generate identically. TADA entries confirmed fully absent (registry, UI, presets).
 - `just build` + same pass frozen.
 
 ---
@@ -198,9 +212,7 @@ Before any code:
 
 ---
 
-## Open Questions for the User
-1. **Git**: working copy has no repo. Init one, or clone the base fresh before W1 commits?
-2. **CUDA/ROCm (M-series decision — DONE, no longer a question)**: no CUDA/ROCm work in this build — those backend paths are no-ops on macOS and we're not building Windows. Startup tasks are removed as dead code; code left in place untouched.
-3. **Voicebox Cloud login** (`voicebox.sh`): user-initiated, not call-home. Keep or strip for the custom build?
-4. **HF metadata lookup** (`ModelManagement.tsx` HF API call for model cards): intentional metadata, not telemetry. Keep? (recommend keep — spec's audit exempts model-weight downloads; this is display-only metadata)
-5. **AUK/MOSS upstream access**: need repo URLs + HF IDs for Phase 0 (spec gives no repo paths). Also confirm AUK runs MPS/CPU (MPS fallback is the whole reason VoxCPM was skipped — same bar applies).
+## Open Items (most decisions now locked — see "Locked Decisions" above)
+
+1. **AUK/MOSS upstream access**: still need repo URLs + HF IDs for Phase 0 (spec gives no repo paths). Also confirm AUK runs MPS/CPU (MPS fallback is the whole reason VoxCPM was skipped — same bar applies).
+2. **49 Kokoro preset voices** are missing locally (only 5 of 54 `.pt` cached). Pre-warm `hexgrad/Kokoro-82M/voices/**` before W4 preset-sample generation OR generate samples using the 5 cached voices only — confirm preference.

@@ -22,7 +22,7 @@ voicebox-main/
 └── CHANGELOG.md, README.md, CONTRIBUTING.md, .bumpversion.cfg
 ```
 
-**Notable:** this working copy is **not a git repo** (no `.git`) despite spec's per-workstream commit gate.
+**Notable:** this working copy is now a git repo (`main` @ `9d8778a`), used for per-workstream commits.
 
 ---
 
