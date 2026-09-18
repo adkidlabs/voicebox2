@@ -35,6 +35,7 @@ import {
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Textarea } from '@/components/ui/textarea';
 import { useToast } from '@/components/ui/use-toast';
+import { AudioPreviewButton } from '@/components/VoiceProfiles/AudioPreviewButton';
 import { apiClient } from '@/lib/api/client';
 import type { EffectConfig, PresetVoice, VoiceType } from '@/lib/api/types';
 import { LANGUAGE_CODES, LANGUAGE_OPTIONS, type LanguageCode } from '@/lib/constants/languages';
@@ -923,7 +924,15 @@ export function ProfileForm() {
                                       : 'border-border hover:bg-muted'
                                   }`}
                                 >
-                                  <div className="font-medium">{voice.name}</div>
+                                  <div className="flex items-center justify-between gap-1">
+                                    <div className="font-medium">{voice.name}</div>
+                                    {voice.sampleAudioUrl && (
+                                      <AudioPreviewButton
+                                        src={apiClient.getPresetSampleUrl(voice.sampleAudioUrl)}
+                                        label={`${t('profileForm.preview')} ${voice.name}`}
+                                      />
+                                    )}
+                                  </div>
                                   <div className="flex gap-1.5 mt-0.5">
                                     <Badge variant="outline" className="text-[10px] h-4 px-1">
                                       {voice.gender}
@@ -1207,9 +1216,7 @@ export function ProfileForm() {
                             {...field}
                           />
                         </FormControl>
-                        <FormDescription>
-                          {t('profileForm.fields.personalityHint')}
-                        </FormDescription>
+                        <FormDescription>{t('profileForm.fields.personalityHint')}</FormDescription>
                         <FormMessage />
                       </FormItem>
                     )}

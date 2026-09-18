@@ -71,6 +71,20 @@ async def import_profile(
 # wildcard swallowing "presets" as a profile_id.
 
 
+SAMPLE_PREFIX = "/preset-samples"
+
+
+def _sample_url_exists(engine: str, voice_id: str) -> bool:
+    sample = (
+        Path(__file__).resolve().parent.parent
+        / "static"
+        / "preset_samples"
+        / engine
+        / f"{voice_id}.wav"
+    )
+    return sample.is_file()
+
+
 @router.get("/profiles/presets/{engine}")
 async def list_preset_voices(engine: str):
     """List available preset voices for an engine."""
@@ -85,6 +99,11 @@ async def list_preset_voices(engine: str):
                     "name": name,
                     "gender": gender,
                     "language": lang,
+                    "sampleAudioUrl": (
+                        f"{SAMPLE_PREFIX}/kokoro/{vid}.wav"
+                        if _sample_url_exists("kokoro", vid)
+                        else None
+                    ),
                 }
                 for vid, name, gender, lang in KOKORO_VOICES
             ],

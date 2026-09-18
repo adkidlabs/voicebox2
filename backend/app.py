@@ -169,6 +169,7 @@ def create_app() -> FastAPI:
     register_routers(application)
     application.mount("/mcp", mcp_app)
     logger.info("MCP: mounted at /mcp")
+    _mount_preset_samples(application)
     _mount_frontend(application)
 
     return application
@@ -195,6 +196,32 @@ def _configure_cors(application: FastAPI) -> None:
         allow_methods=["*"],
         allow_headers=["*"],
     )
+
+
+def _mount_preset_samples(application: FastAPI) -> None:
+    """Serve bundled preset-voice preview samples (custom macOS build).
+
+    ``scripts/generate_preset_samples.py`` writes one short WAV per preset
+    voice into ``backend/static/preset_samples/`` at build time. When the
+    directory exists we serve it at ``/preset-samples`` so voice-profile
+    rows can attach play buttons without loading a TTS model.
+
+    Returns:
+        The URL prefix (``/preset-samples``) or ``None`` if no samples exist.
+    """
+    samples_dir = Path(__file__).resolve().parent / "static" / "preset_samples"
+    if not samples_dir.is_dir():
+        return None
+
+    from fastapi.staticfiles import StaticFiles
+
+    application.mount(
+        "/preset-samples",
+        StaticFiles(directory=str(samples_dir)),
+        name="preset-samples",
+    )
+    logger.info("Preset samples mounted at /preset-samples (%s)", samples_dir)
+    return "/preset-samples"
 
 
 def _mount_frontend(application: FastAPI) -> None:

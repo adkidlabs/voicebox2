@@ -46,6 +46,8 @@ export interface PresetVoice {
   name: string;
   gender: 'male' | 'female';
   language: string;
+  /** Relative path to a bundled preview clip (e.g. `/preset-samples/...`). Null when unavailable. */
+  sampleAudioUrl?: string | null;
 }
 
 export interface ProfileSampleCreate {
