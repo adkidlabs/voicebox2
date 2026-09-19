@@ -149,8 +149,9 @@ export function FloatingGenerateBox({
     | 'luxtts'
     | 'chatterbox'
     | 'chatterbox_turbo'
-    | 'tada'
     | 'kokoro'
+    | 'moss_tts_nano'
+    | 'auk'
     | 'qwen_custom_voice';
   useEffect(() => {
     if (selectedProfile?.language) {

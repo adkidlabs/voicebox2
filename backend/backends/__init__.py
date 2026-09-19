@@ -58,6 +58,7 @@ class ModelConfig:
     needs_trim: bool = False
     retries_runaway: bool = False
     supports_instruct: bool = False
+    experimental: bool = False
     languages: list[str] = field(default_factory=lambda: ["en"])
 
 
@@ -96,6 +97,23 @@ class TTSBackend(Protocol):
 
         Returns:
             Tuple of (combined_audio_array, combined_text)
+        """
+        ...
+
+    async def clone_from_multiple(
+        self,
+        audio_paths: List[str],
+        reference_texts: List[str],
+    ) -> dict:
+        """
+        Build a single voice prompt from multiple reference samples using
+        the engine's native multi-reference mechanism (e.g. embedding
+        averaging). Optional — only engines exposing per-sample embeddings
+        implement it; the service layer falls back to
+        :meth:`combine_voice_prompts` + :meth:`create_voice_prompt` otherwise.
+
+        Returns:
+            Voice prompt dictionary (same shape as ``create_voice_prompt``)
         """
         ...
 
@@ -214,8 +232,9 @@ TTS_ENGINES = {
     "luxtts": "LuxTTS",
     "chatterbox": "Chatterbox TTS",
     "chatterbox_turbo": "Chatterbox Turbo",
-    "tada": "TADA",
     "kokoro": "Kokoro",
+    "moss_tts_nano": "MOSS-TTS-Nano",
+    "auk": "AuK-Flash (Experimental)",
 }
 
 LLM_ENGINES = {
@@ -346,30 +365,31 @@ def _get_non_qwen_tts_configs() -> list[ModelConfig]:
             languages=["en"],
         ),
         ModelConfig(
-            model_name="tada-1b",
-            display_name="TADA 1B (English)",
-            engine="tada",
-            hf_repo_id="HumeAI/tada-1b",
-            model_size="1B",
-            size_mb=4000,
-            languages=["en"],
-        ),
-        ModelConfig(
-            model_name="tada-3b-ml",
-            display_name="TADA 3B Multilingual",
-            engine="tada",
-            hf_repo_id="HumeAI/tada-3b-ml",
-            model_size="3B",
-            size_mb=8000,
-            languages=["en", "ar", "zh", "de", "es", "fr", "it", "ja", "pl", "pt"],
-        ),
-        ModelConfig(
             model_name="kokoro",
             display_name="Kokoro 82M",
             engine="kokoro",
             hf_repo_id="hexgrad/Kokoro-82M",
             size_mb=350,
             languages=["en", "es", "fr", "hi", "it", "pt", "ja", "zh"],
+        ),
+        ModelConfig(
+            model_name="moss-tts-nano",
+            display_name="MOSS-TTS-Nano",
+            engine="moss_tts_nano",
+            hf_repo_id="OpenMOSS-Team/MOSS-TTS-Nano",
+            size_mb=324,
+            needs_trim=False,
+            languages=["zh", "en", "ja", "de", "fr", "ko", "ru", "pt", "es", "it"],
+        ),
+        ModelConfig(
+            model_name="auk",
+            display_name="AuK-Flash (Experimental)",
+            engine="auk",
+            hf_repo_id="tencent/AuK-Flash",
+            size_mb=14100,
+            needs_trim=False,
+            experimental=True,
+            languages=["zh", "en"],
         ),
     ]
 
@@ -530,8 +550,6 @@ async def load_engine_model(engine: str, model_size: str = "default") -> None:
     backend = get_tts_backend_for_engine(engine)
     if engine in ("qwen", "qwen_custom_voice"):
         await backend.load_model_async(model_size)
-    elif engine == "tada":
-        await backend.load_model(model_size)
     else:
         await backend.load_model()
 
@@ -547,7 +565,7 @@ async def ensure_model_cached_or_raise(engine: str, model_size: str = "default")
             cfg = c
             break
 
-    if engine in ("qwen", "qwen_custom_voice", "tada"):
+    if engine in ("qwen", "qwen_custom_voice"):
         if not backend._is_model_cached(model_size):
             raise HTTPException(
                 status_code=400,
@@ -637,6 +655,24 @@ def check_model_loaded(config: ModelConfig) -> bool:
         return False
 
 
+def _snapshot_download_many(model_name: str, repo_ids: list[str]) -> None:
+    """Download several HuggingFace repos into the cache (no model load).
+
+    Wrapped in ``model_load_progress`` so the download animates in the UI —
+    the tracker patches tqdm/hf_hub for the duration, feeding snapshot_download's
+    progress bars into the progress manager exactly like every other engine's
+    load path. Without this the task sits at "Connecting..." with no movement.
+    """
+    from .base import is_model_cached, model_load_progress
+
+    is_cached = all(is_model_cached(r) for r in repo_ids)
+    with model_load_progress(model_name, is_cached):
+        from huggingface_hub import snapshot_download
+
+        for repo_id in repo_ids:
+            snapshot_download(repo_id)
+
+
 def get_model_load_func(config: ModelConfig):
     """Return a callable that loads/downloads the model."""
     from . import get_tts_backend_for_engine
@@ -653,6 +689,19 @@ def get_model_load_func(config: ModelConfig):
 
     if config.engine == "qwen_llm":
         return lambda: llm_service.get_llm_model().load_model(config.model_size)
+
+    if config.engine == "moss_tts_nano":
+        # Checkpoint + audio tokenizer both needed by the runtime.
+        return lambda: _snapshot_download_many(
+            config.model_name,
+            ["OpenMOSS-Team/MOSS-TTS-Nano", "OpenMOSS-Team/MOSS-Audio-Tokenizer-Nano"],
+        )
+
+    if config.engine == "auk":
+        # AuK-Flash weights + its required Qwen2.5-Omni text encoder.
+        from .auk_backend import AUK_DEFAULT_REPO, AUK_QWEN_REPO
+
+        return lambda: _snapshot_download_many(config.model_name, [AUK_DEFAULT_REPO, AUK_QWEN_REPO])
 
     return lambda: get_tts_backend_for_engine(config.engine).load_model()
 
@@ -711,14 +760,18 @@ def get_tts_backend_for_engine(engine: str) -> TTSBackend:
             from .chatterbox_turbo_backend import ChatterboxTurboTTSBackend
 
             backend = ChatterboxTurboTTSBackend()
-        elif engine == "tada":
-            from .hume_backend import HumeTadaBackend
-
-            backend = HumeTadaBackend()
         elif engine == "kokoro":
             from .kokoro_backend import KokoroTTSBackend
 
             backend = KokoroTTSBackend()
+        elif engine == "moss_tts_nano":
+            from .moss_tts_nano_backend import MossTtsNanoBackend
+
+            backend = MossTtsNanoBackend()
+        elif engine == "auk":
+            from .auk_backend import AukBackend
+
+            backend = AukBackend()
         elif engine == "qwen_custom_voice":
             from .qwen_custom_voice_backend import QwenCustomVoiceBackend
 

@@ -1,5 +1,6 @@
 """Voice profile endpoints."""
 
+import asyncio
 import io
 import json as _json
 import logging
@@ -123,7 +124,60 @@ async def list_preset_voices(engine: str):
                 for speaker_id, display_name, gender, lang, _desc in QWEN_CUSTOM_VOICES
             ],
         }
+    if engine == "moss_tts_nano":
+        from ..backends.moss_tts_nano_backend import _available_voice_presets
+
+        return {
+            "engine": engine,
+            "voices": [
+                {
+                    "voice_id": v["voice_id"],
+                    "name": v["display_name"],
+                    # MOSS voices are multilingual — no per-voice language to force.
+                    "language": None,
+                    "sampleAudioUrl": (
+                        f"{SAMPLE_PREFIX}/moss_tts_nano/{v['voice_id']}.wav"
+                        if _sample_url_exists("moss_tts_nano", v["voice_id"])
+                        else None
+                    ),
+                }
+                for v in _available_voice_presets()
+            ],
+        }
     return {"engine": engine, "voices": []}
+
+
+@router.post("/profiles/quality-check")
+async def quality_check_sample(file: UploadFile = File(...)):
+    """Pre-flight quality score for a candidate clone sample (W2).
+
+    Accepts a temp upload (no profile needed), scores it with
+    ``audio.quality.score_reference_audio``, and returns the score plus
+    non-blocking warnings. Never rejects — callers decide.
+    """
+    _allowed_audio_exts = {".wav", ".mp3", ".m4a", ".ogg", ".flac", ".aac", ".webm", ".opus"}
+    _uploaded_ext = Path(file.filename or "").suffix.lower()
+    file_suffix = _uploaded_ext if _uploaded_ext in _allowed_audio_exts else ".wav"
+
+    with tempfile.NamedTemporaryFile(suffix=file_suffix, delete=False) as tmp:
+        total_size = 0
+        while chunk := await file.read(SAMPLE_UPLOAD_CHUNK_SIZE):
+            total_size += len(chunk)
+            if total_size > SAMPLE_MAX_FILE_SIZE:
+                Path(tmp.name).unlink(missing_ok=True)
+                raise HTTPException(
+                    status_code=413,
+                    detail=f"File too large (max {SAMPLE_MAX_FILE_SIZE // (1024 * 1024)} MB)",
+                )
+            tmp.write(chunk)
+        tmp_path = tmp.name
+
+    try:
+        from ..audio.quality import score_reference_audio
+
+        return await asyncio.to_thread(score_reference_audio, tmp_path)
+    finally:
+        Path(tmp_path).unlink(missing_ok=True)
 
 @router.get("/profiles/{profile_id}", response_model=models.VoiceProfileResponse)
 async def get_profile(

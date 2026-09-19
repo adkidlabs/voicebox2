@@ -24,7 +24,7 @@ from ..utils.images import process_avatar, validate_image
 
 logger = logging.getLogger(__name__)
 
-CLONING_ENGINES = {"qwen", "luxtts", "chatterbox", "chatterbox_turbo", "tada"}
+CLONING_ENGINES = {"qwen", "luxtts", "chatterbox", "chatterbox_turbo", "moss_tts_nano", "auk"}
 
 
 def _profile_to_response(
@@ -72,6 +72,11 @@ def _get_preset_voice_ids(engine: str) -> set[str]:
         from ..backends.qwen_custom_voice_backend import QWEN_CUSTOM_VOICES
 
         return {voice_id for voice_id, _name, _gender, _lang, _desc in QWEN_CUSTOM_VOICES}
+
+    if engine == "moss_tts_nano":
+        from ..backends.moss_tts_nano_backend import _available_voice_presets
+
+        return {v["voice_id"] for v in _available_voice_presets()}
 
     return set()
 
@@ -597,6 +602,13 @@ async def create_voice_prompt_for_profile(
             raise ValueError(f"Sample audio not found for profile {profile_id}")
         audio_paths.append(str(sample_audio_path))
     reference_texts = [s.reference_text for s in samples]
+
+    # W2: engines exposing per-sample embeddings build one joint prompt
+    # natively (e.g. Qwen multi-reference items). Everyone else falls back
+    # to waveform combination + a single prompt.
+    clone_multi = getattr(tts_model, "clone_from_multiple", None)
+    if callable(clone_multi):
+        return await clone_multi(audio_paths, reference_texts)
 
     combined_audio, combined_text = await tts_model.combine_voice_prompts(
         audio_paths,

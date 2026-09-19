@@ -33,12 +33,23 @@ s3tokenizer
 spacy-pkuseg
 pyloudnorm
 
-# HumeAI TADA sub-dependencies (hume-tada itself is installed
-# --no-deps in the setup script because it pins torch>=2.7,<2.8.
-# descript-audio-codec is NOT installed — it pulls onnx/tensorboard
-# via descript-audiotools.  A lightweight shim in utils/dac_shim.py
-# provides the only class TADA uses: Snake1d.)
+# HumeAI TADA was dropped in the custom macOS build (W1) — its engine,
+# bundle entries, and UI options were removed. torchaudio stays: Kokoro,
+# MOSS-TTS-Nano, and AuK all need it.
 torchaudio
+
+# MOSS-TTS-Nano (vendored under backend/vendor/moss/ — no pip install
+# needed; the frozen bundle picks it up via --paths + --add-data).
+# Runtime needs only torch + transformers + sentencepiece (already above).
+sentencepiece>=0.2.0
+
+# AuK (experimental) — install the package --no-deps from a checkout to
+# avoid its torch>=2.7,<2.8 pin downgrading the bundle's torch:
+#   pip install --no-deps /path/to/AuK
+# plus these small pure-python deps (omegaconf already listed above):
+torchdiffeq
+x_transformers>=1.31.14
+qwen-omni-utils>=0.0.9
 
 # Kokoro TTS (lightweight 82M-param engine)
 kokoro>=0.9.4
