@@ -1,7 +1,8 @@
 import { zodResolver } from '@hookform/resolvers/zod';
-import { ArrowUpRight, Book, Loader2 } from 'lucide-react';
-import { useEffect, useMemo } from 'react';
+import { ArrowUpRight, Book, Loader2, RefreshCw } from 'lucide-react';
+import { useEffect, useMemo, useState } from 'react';
 import { useForm } from 'react-hook-form';
+import { useQueryClient } from '@tanstack/react-query';
 import { Trans, useTranslation } from 'react-i18next';
 import * as z from 'zod';
 import { Button } from '@/components/ui/button';
@@ -193,6 +194,8 @@ export function GeneralPage() {
           />
         )}
 
+        {platform.metadata.isTauri && <StopAnyServerRow />}
+
         <SettingRow
           title={t('settings.language.label')}
           description={t('settings.language.description')}
@@ -260,6 +263,54 @@ function ConnectionStatus({
     );
   }
   return null;
+}
+
+/**
+ * "Stop any server & start fresh" (custom build). Kills every voicebox
+ * server on the app port — including an old/foreign Voicebox sidecar
+ * squatting on the fixed port and silently serving stale code — then starts
+ * this app's own sidecar. The escape hatch that keeps the shipped app
+ * working anywhere.
+ */
+function StopAnyServerRow() {
+  const { t } = useTranslation();
+  const platform = usePlatform();
+  const queryClient = useQueryClient();
+  const { toast } = useToast();
+  const [busy, setBusy] = useState(false);
+
+  const handleClick = async () => {
+    setBusy(true);
+    try {
+      const url = await platform.lifecycle.forceRestartServer();
+      queryClient.invalidateQueries({ queryKey: ['server', 'health'] });
+      toast({
+        title: t('settings.general.stopAnyServer.successTitle'),
+        description: t('settings.general.stopAnyServer.successDescription', { url }),
+      });
+    } catch (error) {
+      toast({
+        title: t('settings.general.stopAnyServer.failedTitle'),
+        description: error instanceof Error ? error.message : t('settings.general.stopAnyServer.failedDescription'),
+        variant: 'destructive',
+      });
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <SettingRow
+      title={t('settings.general.stopAnyServer.title')}
+      description={t('settings.general.stopAnyServer.description')}
+      action={
+        <Button type="button" size="sm" variant="outline" onClick={handleClick} disabled={busy}>
+          {busy ? <Loader2 className="h-4 w-4 animate-spin" /> : <RefreshCw className="h-4 w-4" />}
+          {t('settings.general.stopAnyServer.button')}
+        </Button>
+      }
+    />
+  );
 }
 
 function UpdatesSection() {

@@ -345,3 +345,115 @@ async def generate_chunked(
 
     audio = concatenate_audio_chunks(audio_chunks, sample_rate, crossfade_ms=crossfade_ms)
     return audio, sample_rate
+
+
+async def generate_chunked_streaming(
+    backend,
+    text: str,
+    voice_prompt: dict,
+    on_chunk,
+    language: str = "en",
+    seed: int | None = None,
+    instruct: str | None = None,
+    max_chunk_chars: int = DEFAULT_MAX_CHUNK_CHARS,
+    crossfade_ms: int = 50,
+    trim_fn=None,
+    runaway_detector=None,
+) -> Tuple[np.ndarray, int]:
+    """Like :func:`generate_chunked` but fires ``on_chunk(audio, sr)`` as
+    audio becomes available (W3 streaming).
+
+    Engines exposing ``stream_generate`` yield engine-native sub-chunks per
+    text chunk (mlx: every small generated block; kokoro: per sentence;
+    moss: per voice-clone segment). Everyone else falls back to
+    ``backend.generate`` per text chunk. The returned audio is the full
+    crossfaded concatenation, identical in spirit to ``generate_chunked``.
+
+    Runaway detection still applies per emitted chunk: when a chunk flags
+    unstable output, its text is split in half and retried (depth-limited),
+    mirroring ``generate_chunked``'s behavior.
+    """
+    async def emit(audio: np.ndarray, sr: int) -> None:
+        if on_chunk is not None:
+            await on_chunk(np.asarray(audio, dtype=np.float32), sr)
+
+    async def generate_streaming_one(
+        chunk_text: str,
+        chunk_seed: int | None,
+        retry_depth: int = 0,
+    ) -> tuple[np.ndarray, int]:
+        stream = getattr(backend, "stream_generate", None)
+        if callable(stream):
+            parts: List[np.ndarray] = []
+            sr_out: int | None = None
+            async for sub_audio, sub_sr in stream(
+                chunk_text, voice_prompt, language, chunk_seed, instruct
+            ):
+                if trim_fn is not None:
+                    sub_audio = trim_fn(sub_audio, sub_sr)
+                sub_audio = np.asarray(sub_audio, dtype=np.float32)
+                parts.append(sub_audio)
+                sr_out = sub_sr
+                await emit(sub_audio, sub_sr)
+
+            if runaway_detector is not None and sr_out is not None:
+                for p in parts:
+                    if runaway_detector(p, sr_out):
+                        return await _runaway_retry(
+                            chunk_text, chunk_seed, retry_depth, generate_streaming_one, sr_out
+                        )
+
+            if sr_out is None:
+                raise RuntimeError("Streaming engine produced no audio")
+            return concatenate_audio_chunks(parts, sr_out, crossfade_ms=crossfade_ms), sr_out
+
+        # Fallback: non-streaming engine — one chunk per text chunk.
+        audio, sr = await backend.generate(chunk_text, voice_prompt, language, chunk_seed, instruct)
+        if trim_fn is not None:
+            audio = trim_fn(audio, sr)
+        audio = np.asarray(audio, dtype=np.float32)
+        await emit(audio, sr)
+
+        if runaway_detector is not None and runaway_detector(audio, sr):
+            return await _runaway_retry(
+                chunk_text, chunk_seed, retry_depth, generate_streaming_one, sr
+            )
+        return audio, sr
+
+    async def _runaway_retry(
+        chunk_text: str,
+        chunk_seed: int | None,
+        retry_depth: int,
+        generator,
+        sr: int,
+    ) -> tuple[np.ndarray, int]:
+        if retry_depth >= MAX_RUNAWAY_RETRIES or len(chunk_text) <= MIN_RUNAWAY_RETRY_CHARS:
+            raise RuntimeError("TTS output remained unstable after retrying smaller text chunks")
+        retry_max_chars = max(MIN_RUNAWAY_RETRY_CHARS, len(chunk_text) // 2)
+        retry_chunks = split_text_into_chunks(chunk_text, retry_max_chars)
+        if len(retry_chunks) <= 1:
+            raise RuntimeError("Unable to split unstable TTS output for retry")
+        retry_audio: List[np.ndarray] = []
+        for i, retry_text in enumerate(retry_chunks):
+            retry_seed = (
+                chunk_seed + ((retry_depth + 1) * 1000) + i if chunk_seed is not None else None
+            )
+            audio, sample_rate = await generator(retry_text, retry_seed, retry_depth + 1)
+            retry_audio.append(np.asarray(audio, dtype=np.float32))
+        return concatenate_audio_chunks(retry_audio, sr, crossfade_ms=crossfade_ms), sr
+
+    chunks = split_text_into_chunks(text, max_chunk_chars)
+    if not chunks:
+        return np.array([], dtype=np.float32), 24000
+
+    audio_chunks: List[np.ndarray] = []
+    sample_rate: int | None = None
+    for i, chunk_text in enumerate(chunks):
+        chunk_seed = (seed + i) if seed is not None else None
+        chunk_audio, chunk_sr = await generate_streaming_one(chunk_text, chunk_seed)
+        audio_chunks.append(chunk_audio)
+        if sample_rate is None:
+            sample_rate = chunk_sr
+
+    audio = concatenate_audio_chunks(audio_chunks, sample_rate, crossfade_ms=crossfade_ms)
+    return audio, sample_rate or 24000

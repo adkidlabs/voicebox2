@@ -59,6 +59,10 @@ export interface PlatformLifecycle {
   startServer(remote?: boolean, modelsDir?: string | null): Promise<string>;
   stopServer(): Promise<void>;
   restartServer(modelsDir?: string | null): Promise<string>;
+  /** Kill every voicebox server on the app port (incl. foreign/old ones). Returns count killed. */
+  stopAnyServer(): Promise<number>;
+  /** stopAnyServer + start a fresh sidecar — escape hatch when an old/foreign server squats on the port. */
+  forceRestartServer(modelsDir?: string | null): Promise<string>;
   setKeepServerRunning(keep: boolean): Promise<void>;
   setBackendOverride(backend?: string | null): Promise<void>;
   setupWindowCloseHandler(): Promise<void>;

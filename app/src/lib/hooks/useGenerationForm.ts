@@ -4,8 +4,10 @@ import { useForm } from 'react-hook-form';
 import * as z from 'zod';
 import { useToast } from '@/components/ui/use-toast';
 import { apiClient } from '@/lib/api/client';
+import { streamingGenerateClient } from '@/lib/api/streaming';
 import type { EffectConfig } from '@/lib/api/types';
 import { LANGUAGE_CODES, type LanguageCode } from '@/lib/constants/languages';
+import { useEngines } from '@/lib/hooks/useEngines';
 import { useGeneration } from '@/lib/hooks/useGeneration';
 import { useModelDownloadToast } from '@/lib/hooks/useModelDownloadToast';
 import { useGenerationSettings } from '@/lib/hooks/useSettings';
@@ -25,8 +27,9 @@ const generationSchema = z.object({
       'luxtts',
       'chatterbox',
       'chatterbox_turbo',
-      'tada',
       'kokoro',
+      'moss_tts_nano',
+      'auk',
     ])
     .optional(),
   personality: z.boolean().optional(),
@@ -44,6 +47,7 @@ export function useGenerationForm(options: UseGenerationFormOptions = {}) {
   const { toast } = useToast();
   const generation = useGeneration();
   const addPendingGeneration = useGenerationStore((state) => state.addPendingGeneration);
+  const { data: engines } = useEngines();
   const { settings: genSettings } = useGenerationSettings();
   const maxChunkChars = genSettings?.max_chunk_chars ?? 800;
   const crossfadeMs = genSettings?.crossfade_ms ?? 50;
@@ -94,15 +98,15 @@ export function useGenerationForm(options: UseGenerationFormOptions = {}) {
             ? 'chatterbox-tts'
             : engine === 'chatterbox_turbo'
               ? 'chatterbox-turbo'
-              : engine === 'tada'
-                ? data.modelSize === '3B'
-                  ? 'tada-3b-ml'
-                  : 'tada-1b'
-                : engine === 'kokoro'
-                  ? 'kokoro'
-                  : engine === 'qwen_custom_voice'
-                    ? `qwen-custom-voice-${data.modelSize}`
-                    : `qwen-tts-${data.modelSize}`;
+              : engine === 'kokoro'
+                ? 'kokoro'
+                : engine === 'moss_tts_nano'
+                  ? 'moss-tts-nano'
+                  : engine === 'auk'
+                    ? 'auk'
+                    : engine === 'qwen_custom_voice'
+                      ? `qwen-custom-voice-${data.modelSize}`
+                      : `qwen-tts-${data.modelSize}`;
       const displayName =
         engine === 'luxtts'
           ? 'LuxTTS'
@@ -110,13 +114,13 @@ export function useGenerationForm(options: UseGenerationFormOptions = {}) {
             ? 'Chatterbox TTS'
             : engine === 'chatterbox_turbo'
               ? 'Chatterbox Turbo'
-              : engine === 'tada'
-                ? data.modelSize === '3B'
-                  ? 'TADA 3B Multilingual'
-                  : 'TADA 1B'
-                : engine === 'kokoro'
-                  ? 'Kokoro 82M'
-                  : engine === 'qwen_custom_voice'
+              : engine === 'kokoro'
+                ? 'Kokoro 82M'
+                : engine === 'moss_tts_nano'
+                  ? 'MOSS-TTS-Nano'
+                  : engine === 'auk'
+                    ? 'AuK-Flash (Experimental)'
+                    : engine === 'qwen_custom_voice'
                     ? data.modelSize === '1.7B'
                       ? 'Qwen CustomVoice 1.7B'
                       : 'Qwen CustomVoice 0.6B'
@@ -138,13 +142,13 @@ export function useGenerationForm(options: UseGenerationFormOptions = {}) {
       }
 
       const hasModelSizes =
-        engine === 'qwen' || engine === 'qwen_custom_voice' || engine === 'tada';
+        engine === 'qwen' || engine === 'qwen_custom_voice';
       // Only Qwen CustomVoice actually honors the instruct kwarg at model level.
       // Base Qwen3-TTS accepts the kwarg but ignores it.
       const supportsInstruct = engine === 'qwen_custom_voice';
       const effectsChain = options.getEffectsChain?.();
-      // This now returns immediately with status="generating"
-      const result = await generation.mutateAsync({
+
+      const request = {
         profile_id: selectedProfileId,
         text: data.text,
         language: data.language,
@@ -157,7 +161,55 @@ export function useGenerationForm(options: UseGenerationFormOptions = {}) {
         crossfade_ms: crossfadeMs,
         normalize: normalizeAudio,
         effects_chain: effectsChain?.length ? effectsChain : undefined,
-      });
+      };
+
+      // W3: stream-capable engines play audio live over WebSocket. Falls
+      // back to REST when the stream errors before any audio arrives.
+      const supportsStreaming =
+        engines?.find((e) => e.engine === engine)?.supports_streaming ?? false;
+      if (supportsStreaming) {
+        let streamId: string | null = null;
+        try {
+          const streamed = await streamingGenerateClient.generate(request, {
+            onStarted: (id) => {
+              streamId = id;
+              addPendingGeneration(id);
+            },
+          });
+          streamId = streamed.generationId;
+          if (!useGenerationStore.getState().pendingGenerationIds.has(streamed.generationId)) {
+            addPendingGeneration(streamed.generationId);
+          }
+          form.reset({
+            text: '',
+            language: data.language,
+            seed: undefined,
+            modelSize: data.modelSize,
+            instruct: '',
+            engine: data.engine,
+            personality: data.personality,
+          });
+          options.onSuccess?.(streamed.generationId);
+          return;
+        } catch (error) {
+          // Mid-stream failure: the row exists and is marked failed — keep
+          // tracking so history refreshes. Pre-audio failure: fall back to
+          // REST only if the row was never created.
+          if (streamId === null) {
+            console.error('Streaming failed before audio; falling back to REST:', error);
+          } else {
+            toast({
+              title: 'Generation failed',
+              description: error instanceof Error ? error.message : 'Streamed generation failed',
+              variant: 'destructive',
+            });
+            return;
+          }
+        }
+      }
+
+      // This now returns immediately with status="generating"
+      const result = await generation.mutateAsync(request);
 
       // Track this generation for SSE status updates
       addPendingGeneration(result.id);

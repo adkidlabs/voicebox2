@@ -5,8 +5,10 @@ Eliminates duplication of cache checking, device detection,
 voice prompt combination, and model loading progress tracking.
 """
 
+import asyncio
 import logging
 import platform
+import threading
 from contextlib import contextmanager
 from pathlib import Path
 from typing import Callable, List, Optional, Tuple
@@ -293,6 +295,40 @@ def model_load_progress(
             task_manager.complete_download(model_name)
     finally:
         tracker_context.__exit__(None, None, None)
+
+
+_SENTINEL = object()
+
+
+async def async_iter_from_sync(sync_iter_factory: Callable, *args):
+    """Run a sync iterator factory in a daemon thread, yield items as async.
+
+    W3 streaming helper: engines whose upstream produce chunks via a plain
+    (sync) iterator — mlx_audio's generator, kokoro's KPipeline, MOSS's
+    synthesize_stream — wrap that iterator with this to expose an
+    ``async def stream_generate(...)`` async generator without blocking the
+    event loop. Exceptions raised inside the thread re-raise in the consumer.
+    """
+    loop = asyncio.get_running_loop()
+    queue: asyncio.Queue = asyncio.Queue()
+
+    def _produce():
+        try:
+            for item in sync_iter_factory(*args):
+                loop.call_soon_threadsafe(queue.put_nowait, item)
+        except Exception as e:  # noqa: BLE001 — forwarded to the consumer
+            loop.call_soon_threadsafe(queue.put_nowait, e)
+        finally:
+            loop.call_soon_threadsafe(queue.put_nowait, _SENTINEL)
+
+    threading.Thread(target=_produce, daemon=True).start()
+    while True:
+        item = await queue.get()
+        if item is _SENTINEL:
+            break
+        if isinstance(item, Exception):
+            raise item
+        yield item
 
 
 def patch_chatterbox_f32(model) -> None:

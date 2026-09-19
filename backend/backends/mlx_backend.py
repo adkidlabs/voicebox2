@@ -18,7 +18,7 @@ patch_huggingface_hub_offline()
 ensure_original_qwen_config_cached()
 
 from . import TTSBackend, STTBackend, LANGUAGE_CODE_TO_NAME, WHISPER_HF_REPOS
-from .base import is_model_cached, combine_voice_prompts as _combine_voice_prompts, model_load_progress
+from .base import is_model_cached, combine_voice_prompts as _combine_voice_prompts, async_iter_from_sync, model_load_progress
 from ..utils.cache import get_cache_key, get_cached_voice_prompt, cache_voice_prompt
 
 
@@ -262,6 +262,54 @@ class MLXTTSBackend:
         audio, sample_rate = await asyncio.to_thread(_generate_sync)
 
         return audio, sample_rate
+
+    async def stream_generate(
+        self,
+        text: str,
+        voice_prompt: dict,
+        language: str = "en",
+        seed: Optional[int] = None,
+        instruct: Optional[str] = None,
+    ):
+        """Yield (audio_chunk, sample_rate) from mlx_audio as generated (W3).
+
+        mlx_audio's generate() returns a generator of small audio chunks —
+        the only engine with true native sub-chunk streaming.
+        """
+        await self.load_model_async(None)
+        ref_audio = voice_prompt.get("ref_audio") or voice_prompt.get("ref_audio_path")
+        ref_text = voice_prompt.get("ref_text", "")
+        if ref_audio and not Path(ref_audio).exists():
+            logger.warning("Audio file not found: %s — streaming without voice prompt", ref_audio)
+            ref_audio = None
+        lang = LANGUAGE_CODE_TO_NAME.get(language, "auto")
+        async for item in async_iter_from_sync(
+            self._stream_chunks_sync, str(text).strip(), ref_audio, ref_text, lang, seed
+        ):
+            yield item
+
+    def _stream_chunks_sync(self, text: str, ref_audio, ref_text: str, lang: str, seed: Optional[int]):
+        if seed is not None:
+            import mlx.core as mx
+
+            np.random.seed(seed)
+            mx.random.seed(seed)
+
+        try:
+            if ref_audio:
+                import inspect
+
+                sig = inspect.signature(self.model.generate)
+                if "ref_audio" in sig.parameters:
+                    for result in self.model.generate(text, ref_audio=ref_audio, ref_text=ref_text, lang_code=lang):
+                        yield np.array(result.audio, dtype=np.float32), result.sample_rate
+                    return
+            for result in self.model.generate(text, lang_code=lang):
+                yield np.array(result.audio, dtype=np.float32), result.sample_rate
+        except Exception as e:
+            logger.warning("Streaming voice clone failed, generating without prompt: %s", e)
+            for result in self.model.generate(text, lang_code=lang):
+                yield np.array(result.audio, dtype=np.float32), result.sample_rate
 
 
 class MLXSTTBackend:

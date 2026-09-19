@@ -44,6 +44,31 @@ class TauriLifecycle implements PlatformLifecycle {
     }
   }
 
+  async stopAnyServer(): Promise<number> {
+    try {
+      const killed = await invoke<number>('stop_any_server');
+      console.log('Stopped voicebox servers:', killed);
+      return killed;
+    } catch (error) {
+      console.error('Failed to stop servers:', error);
+      throw error;
+    }
+  }
+
+  async forceRestartServer(modelsDir?: string | null): Promise<string> {
+    try {
+      const result = await invoke<string>('force_restart_server', {
+        modelsDir: modelsDir ?? undefined,
+      });
+      console.log('Server force-restarted:', result);
+      this.onServerReady?.();
+      return result;
+    } catch (error) {
+      console.error('Failed to force-restart server:', error);
+      throw error;
+    }
+  }
+
   async setKeepServerRunning(keepRunning: boolean): Promise<void> {
     try {
       await invoke('set_keep_server_running', { keepRunning });

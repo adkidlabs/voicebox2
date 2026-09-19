@@ -830,10 +830,10 @@ async fn start_server(
 async fn stop_server(state: State<'_, ServerState>) -> Result<(), String> {
     let pid = state.server_pid.lock().unwrap().take();
     let _child = state.child.lock().unwrap().take();
-    
+
     if let Some(pid) = pid {
         println!("stop_server: Stopping server with PID: {}", pid);
-        
+
         #[cfg(unix)]
         {
             use std::process::Command;
@@ -841,20 +841,20 @@ async fn stop_server(state: State<'_, ServerState>) -> Result<(), String> {
             let _ = Command::new("kill")
                 .args(["-TERM", "--", &format!("-{}", pid)])
                 .output();
-            
+
             // Brief wait then force kill
             std::thread::sleep(std::time::Duration::from_millis(100));
-            
+
             let _ = Command::new("kill")
                 .args(["-9", "--", &format!("-{}", pid)])
                 .output();
             let _ = Command::new("kill")
                 .args(["-9", &pid.to_string()])
                 .output();
-            
+
             println!("stop_server: Process group kill completed");
         }
-        
+
         #[cfg(windows)]
         {
             // Send graceful shutdown via HTTP — the server's parent-pid watchdog
@@ -872,8 +872,107 @@ async fn stop_server(state: State<'_, ServerState>) -> Result<(), String> {
             println!("Shutdown request sent (server watchdog will handle cleanup)");
         }
     }
-    
+
     Ok(())
+}
+
+/// Kill every voicebox-named process listening on *port* (macOS/Linux).
+///
+/// Unlike `stop_server` — which only kills the server this app instance
+/// spawned or adopted — this also clears foreign voicebox sidecars, e.g. the
+/// production Voicebox.app's old server squatting on our fixed port and
+/// silently serving stale code to a dev/new app instance. Non-voicebox
+/// processes on the port are left alone.
+#[cfg(unix)]
+fn kill_voicebox_listeners_on_port(port: u16) -> Vec<u32> {
+    use std::process::Command;
+    let mut killed = Vec::new();
+    if let Ok(output) = Command::new("lsof")
+        .args(["-i", &format!(":{}", port), "-sTCP:LISTEN"])
+        .output()
+    {
+        let output_str = String::from_utf8_lossy(&output.stdout);
+        for line in output_str.lines().skip(1) {
+            let parts: Vec<&str> = line.split_whitespace().collect();
+            if parts.len() >= 2 {
+                let command = parts[0];
+                let pid_str = parts[1];
+                if command.contains("voicebox") {
+                    if let Ok(pid) = pid_str.parse::<u32>() {
+                        println!(
+                            "kill_voicebox_listeners_on_port: killing {} (PID: {}) on port {}",
+                            command, pid, port
+                        );
+                        let _ = Command::new("kill")
+                            .args(["-9", &pid.to_string()])
+                            .output();
+                        killed.push(pid);
+                    }
+                }
+            }
+        }
+    }
+    killed
+}
+
+/// Windows variant: kill the voicebox-named PID owning the port, if any.
+#[cfg(windows)]
+fn kill_voicebox_listeners_on_port(port: u16) -> Vec<u32> {
+    let mut killed = Vec::new();
+    if let Some(pid) = find_voicebox_pid_on_port(port) {
+        let _ = std::process::Command::new("taskkill")
+            .args(["/PID", &pid.to_string(), "/T", "/F"])
+            .output();
+        killed.push(pid);
+    }
+    killed
+}
+
+#[command]
+async fn stop_any_server(state: State<'_, ServerState>) -> Result<u32, String> {
+    println!("stop_any_server: stopping any voicebox server on port {}...", SERVER_PORT);
+
+    // Kill our own tracked server first (child handle + adopted pid).
+    stop_server(state.clone()).await?;
+
+    // Then clear any foreign/orphaned voicebox listeners still on the port.
+    let killed = kill_voicebox_listeners_on_port(SERVER_PORT);
+
+    if killed.is_empty() {
+        println!("stop_any_server: no additional voicebox listeners found");
+    } else {
+        println!("stop_any_server: killed {} additional listener(s)", killed.len());
+    }
+    Ok(killed.len() as u32)
+}
+
+/// Stop ANY voicebox server on the port (not just our own), then start a
+/// fresh sidecar. This is the escape hatch when an old/foreign Voicebox
+/// server squats on the fixed port and silently serves stale code.
+#[command]
+async fn force_restart_server(
+    app: tauri::AppHandle,
+    state: State<'_, ServerState>,
+    models_dir: Option<String>,
+) -> Result<String, String> {
+    println!("force_restart_server: stopping any server on port {}...", SERVER_PORT);
+
+    // Update stored models_dir like restart_server does.
+    if let Some(ref dir) = models_dir {
+        if dir.is_empty() {
+            *state.models_dir.lock().unwrap() = None;
+        } else {
+            *state.models_dir.lock().unwrap() = Some(dir.clone());
+        }
+    }
+
+    stop_any_server(state.clone()).await?;
+
+    println!("force_restart_server: waiting for port release...");
+    tokio::time::sleep(tokio::time::Duration::from_millis(1000)).await;
+
+    println!("force_restart_server: starting fresh server...");
+    start_server(app, state.clone(), None, None).await
 }
 
 #[command]
@@ -1508,6 +1607,8 @@ pub fn run() {
             start_server,
             stop_server,
             restart_server,
+            stop_any_server,
+            force_restart_server,
             set_keep_server_running,
             set_backend_override,
             start_system_audio_capture,

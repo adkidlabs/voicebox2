@@ -256,6 +256,13 @@
       "record": "Record",
       "system": "System Audio"
     },
+    "quality": {
+      "checking": "Checking sample quality…",
+      "score": "Sample quality: {{score}}/100",
+      "extraSamples": "Additional samples ({{count}})",
+      "extraHint": "Extra files are added as clone samples with the same reference text.",
+      "checkFailed": "Quality check failed"
+    },
     "fields": {
       "engine": "Engine",
       "voice": "Voice",
@@ -790,6 +797,15 @@
         "updatedTitle": "Setting updated",
         "enabled": "Network access enabled. Restart the app to apply.",
         "disabled": "Network access disabled. Restart the app to apply."
+      },
+      "stopAnyServer": {
+        "title": "Stop any server & start fresh",
+        "description": "Kills every Voicebox server on the app port — including an old or foreign one serving stale code — then starts this app's own server.",
+        "button": "Stop & restart",
+        "successTitle": "Server restarted",
+        "successDescription": "A fresh server is running at {{url}}.",
+        "failedTitle": "Restart failed",
+        "failedDescription": "Could not stop the old server or start a new one."
       },
       "connection": {
         "connecting": "Connecting",

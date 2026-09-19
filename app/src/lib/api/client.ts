@@ -24,6 +24,7 @@ import type {
   GenerationSettings,
   GenerationSettingsUpdate,
   GenerationVersionResponse,
+  EngineInfo,
   HealthResponse,
   HistoryListResponse,
   HistoryQuery,
@@ -37,6 +38,7 @@ import type {
   PresetVoice,
   ProfileSampleResponse,
   RocmStatus,
+  SampleQualityResult,
   StoryCreate,
   StoryDetailResponse,
   StoryItemBatchUpdate,
@@ -74,6 +76,11 @@ class ApiClient {
   private getBaseUrl(): string {
     const serverUrl = useServerStore.getState().serverUrl;
     return serverUrl;
+  }
+
+  /** Public WebSocket URL for a server path (http→ws upgrade). */
+  getWsUrl(path: string): string {
+    return `${this.getBaseUrl().replace(/^http/, 'ws')}${path}`;
   }
 
   private async request<T>(endpoint: string, options?: RequestInit): Promise<T> {
@@ -119,6 +126,26 @@ class ApiClient {
 
   async listPresetVoices(engine: string): Promise<{ engine: string; voices: PresetVoice[] }> {
     return this.request<{ engine: string; voices: PresetVoice[] }>(`/profiles/presets/${engine}`);
+  }
+
+  async checkSampleQuality(file: File): Promise<SampleQualityResult> {
+    const url = `${this.getBaseUrl()}/profiles/quality-check`;
+    const formData = new FormData();
+    formData.append('file', file);
+
+    const response = await fetch(url, {
+      method: 'POST',
+      body: formData,
+    });
+
+    if (!response.ok) {
+      const error = await response.json().catch(() => ({
+        detail: response.statusText,
+      }));
+      throw new Error(formatErrorDetail(error.detail, `HTTP error! status: ${response.status}`));
+    }
+
+    return response.json();
   }
 
   async updateProfile(profileId: string, data: VoiceProfileCreate): Promise<VoiceProfileResponse> {
@@ -538,6 +565,10 @@ class ApiClient {
   // Model Management
   async getModelStatus(): Promise<ModelStatusListResponse> {
     return this.request<ModelStatusListResponse>('/models/status');
+  }
+
+  async getEngines(): Promise<{ engines: EngineInfo[] }> {
+    return this.request<{ engines: EngineInfo[] }>('/engines');
   }
 
   async getModelsCacheDir(): Promise<{ path: string }> {

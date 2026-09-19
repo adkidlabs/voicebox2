@@ -79,8 +79,9 @@ export interface GenerationRequest {
     | 'luxtts'
     | 'chatterbox'
     | 'chatterbox_turbo'
-    | 'tada'
-    | 'kokoro';
+    | 'kokoro'
+    | 'moss_tts_nano'
+    | 'auk';
   instruct?: string;
   /** When true and the profile has a personality prompt, input text is rewritten in-character before TTS. */
   personality?: boolean;
@@ -356,6 +357,60 @@ export interface HuggingFaceModelInfo {
 
 export interface ModelStatusListResponse {
   models: ModelStatus[];
+}
+
+export interface EngineModelVariant {
+  model_name: string;
+  display_name: string;
+  model_size: string;
+  hf_repo_id: string;
+  size_mb: number;
+}
+
+export interface EnginePresetVoice {
+  voice_id: string;
+  display_name: string;
+}
+
+/** Declarative engine metadata from GET /engines (W1 registry). */
+export interface EngineInfo {
+  engine: string;
+  display_name: string;
+  description: string;
+  sample_rate: number;
+  languages: string[];
+  supports_cloning: boolean;
+  supports_presets: boolean;
+  supports_streaming: boolean;
+  supports_mps: boolean;
+  license: string;
+  min_ram_gb: number;
+  experimental: boolean;
+  models: EngineModelVariant[];
+  preset_voices: EnginePresetVoice[];
+}
+
+export interface SampleQualityWarning {
+  code: string;
+  message: string;
+  severity: 'warn' | 'error';
+}
+
+export interface SampleQualityMetrics {
+  duration_s?: number;
+  rms_db?: number;
+  peak?: number;
+  clipping_ratio?: number;
+  silence_ratio?: number;
+  snr_db?: number;
+  dc_offset?: number;
+}
+
+/** Pre-flight clone-sample score from POST /profiles/quality-check (W2). */
+export interface SampleQualityResult {
+  score: number;
+  warnings: SampleQualityWarning[];
+  metrics: SampleQualityMetrics;
 }
 
 export interface ModelDownloadRequest {

@@ -26,6 +26,7 @@ from . import TTSBackend
 from .base import (
     get_torch_device,
     combine_voice_prompts as _combine_voice_prompts,
+    async_iter_from_sync,
     model_load_progress,
 )
 
@@ -291,3 +292,39 @@ class KokoroTTSBackend:
             return audio.astype(np.float32), KOKORO_SAMPLE_RATE
 
         return await asyncio.to_thread(_generate_sync)
+
+    async def stream_generate(
+        self,
+        text: str,
+        voice_prompt: dict,
+        language: str = "en",
+        seed: Optional[int] = None,
+        instruct: Optional[str] = None,
+    ):
+        """Yield (audio_chunk, sample_rate) per sentence as generated (W3).
+
+        Kokoro's KPipeline produces one audio chunk per sentence — streaming
+        starts playback after the first sentence instead of the whole text.
+        """
+        await self.load_model()
+        voice_name = voice_prompt.get("preset_voice_id") or voice_prompt.get("kokoro_voice") or KOKORO_DEFAULT_VOICE
+        async for item in async_iter_from_sync(
+            self._stream_chunks_sync, str(text).strip(), voice_name, language, seed
+        ):
+            yield item
+
+    def _stream_chunks_sync(self, text: str, voice_name: str, language: str, seed: Optional[int]):
+        import torch
+
+        if seed is not None:
+            torch.manual_seed(seed)
+            if torch.cuda.is_available():
+                torch.cuda.manual_seed(seed)
+
+        pipeline = self._get_pipeline(language)
+        for result in pipeline(text, voice=voice_name, speed=1.0):
+            if result.audio is not None:
+                chunk = result.audio
+                if isinstance(chunk, torch.Tensor):
+                    chunk = chunk.detach().cpu().numpy()
+                yield chunk.squeeze().astype(np.float32), KOKORO_SAMPLE_RATE

@@ -39,7 +39,7 @@ Companion doc: `CODEBASE_MAP.md` (full code understanding).
 | **HF metadata lookup** (ModelManagement.tsx) | **KEEP** — display-only; outside W5 diff surface. |
 | **Env** | Python 3.12.8 arm64 venv at `backend/venv` verified: torch 2.14.0 (MPS ✅), mlx 0.32.2/mlx-lm 0.31.1/mlx-audio 0.4.1 ✅, transformers 4.57.3, librosa 0.11, kokoro/misaki 0.9.4, qwen-tts 0.1.1, chatterbox-tts 0.1.7, hume-tada 0.1.9. `dac_shim` handles the missing `dac` pkg at runtime. |
 
-> **W1 phase-0 blocker (still open):** need AUK + MOSS-TTS-Nano upstream repo/HF IDs before dependency audit.
+> **W1 phase-0 blocker (resolved 2026-09-19):** MOSS-TTS-Nano = `OpenMOSS/MOSS-TTS-Nano` + HF `OpenMOSS-Team/MOSS-TTS-Nano`/`OpenMOSS-Team/MOSS-Audio-Tokenizer-Nano`; AuK = `Tencent-Hunyuan/AuK` + HF `tencent/AuK(-Flash)` + `Qwen/Qwen2.5-Omni-3B` encoder. Audit written to `docs/plans/W1_ENGINE_AUDIT.md`. W1 shipped: registry + `/engines`, MOSS wired, AuK experimental, TADA dropped. Fresh-cache download+generate deferred to overnight weights pull.
 
 ---
 
@@ -214,5 +214,8 @@ Before any code:
 
 ## Open Items (most decisions now locked — see "Locked Decisions" above)
 
-1. **AUK/MOSS upstream access**: still need repo URLs + HF IDs for Phase 0 (spec gives no repo paths). Also confirm AUK runs MPS/CPU (MPS fallback is the whole reason VoxCPM was skipped — same bar applies).
-2. **49 Kokoro preset voices** are missing locally (only 5 of 54 `.pt` cached). Pre-warm `hexgrad/Kokoro-82M/voices/**` before W4 preset-sample generation OR generate samples using the 5 cached voices only — confirm preference.
+1. **AUK/MOSS upstream access**: resolved 2026-09-19 (see W1 blocker note above).
+2. **49 Kokoro preset voices**: resolved — W4 pre-warmed all 54 `.pt` files + generated 54 preview samples.
+3. **AuK full capability surface** (user reminder, 2026-09-19): the W1 adapter covers the TTS/zero-shot-cloning slice only. AuK's docs expose more — speech editing (insert/replace/delete), denoising/enhancement, source separation, cross-voice conversion — all via the same instruction-driven `generate(messages, audio=...)` API. Follow-up: expose edit/denoise/SE as Voicebox endpoints + UI on `auk_backend.py` reusing `AukInfer` (single model load, different instructions/modes). Defer until weights land and TTS slice is verified on torch 2.14.
+4. **Stop-any-server option** (user request, 2026-09-19, shipped): the production app's old sidecar squatted on port 17493 and silently served stale code to a dev app instance ("Backend already running" reuse trap). Shipped: `stop_any_server` + `force_restart_server` Tauri commands (kill every voicebox-named listener on the port, not just our own), a tauri-only Settings → General row ("Stop any server & start fresh"), and a justfile guard (`dev`/`dev-web` probe `/engines` and error with the kill command if a foreign server squats). Makes the shipped app work anywhere.
+5. **Breeze TTS 2** (user request, 2026-09-19 — scheduled later, after W3 + real-world testing): #1 open-weight TTS on Artificial Analysis (Elo 1215). Runs on M1 via mlx-audio (needs upgrading venv's mlx-audio 0.4.1 → newer; re-verify the Qwen MLX path after) or the standalone `mlx-breeze-tts2` port. Sizes: 4-bit 3.0GB / 8-bit 4.6GB (sweet spot) / bf16 7.6GB. Capabilities: cloning (existing flow), voice direction via `instruct`+`cfg_scale` (existing instruct field), streaming (W3 WS path), 24kHz mono, en+zh (open model). One net-new UI: the designed-voice flow (`voice_type="designed"` + `design_prompt` scaffold already exists). **License: weights are research/non-commercial only** — fine for personal use, not for commercial shipping.

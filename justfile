@@ -133,6 +133,15 @@ dev: _ensure-venv _ensure-sidecar
 
     backend_pid=""
     if curl -sf http://127.0.0.1:17493/health > /dev/null 2>&1; then
+        # /health alone isn't enough: the production app's sidecar (or any
+        # older build) can squat on 17493 and silently serve stale code.
+        # /engines only exists in W1+ of this custom build.
+        if ! curl -sf http://127.0.0.1:17493/engines > /dev/null 2>&1; then
+            echo "ERROR: port 17493 is occupied by an old/foreign Voicebox server (no /engines route)."
+            echo "Kill it and re-run 'just dev':"
+            echo "    kill \$(lsof -ti :17493)"
+            exit 1
+        fi
         echo "Backend already running on http://localhost:17493"
     else
         echo "Starting backend on http://localhost:17493 ..."
@@ -183,6 +192,14 @@ dev-web: _ensure-venv
 
     backend_pid=""
     if curl -sf http://127.0.0.1:17493/health > /dev/null 2>&1; then
+        # Same guard as `dev` — a foreign/old server on 17493 would serve
+        # stale code; /engines only exists in W1+ of this custom build.
+        if ! curl -sf http://127.0.0.1:17493/engines > /dev/null 2>&1; then
+            echo "ERROR: port 17493 is occupied by an old/foreign Voicebox server (no /engines route)."
+            echo "Kill it and re-run 'just dev-web':"
+            echo "    kill \$(lsof -ti :17493)"
+            exit 1
+        fi
         echo "Backend already running on http://localhost:17493"
     else
         echo "Starting backend on http://localhost:17493 ..."
