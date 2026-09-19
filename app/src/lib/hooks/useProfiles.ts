@@ -87,6 +87,50 @@ export function useAddSample() {
   });
 }
 
+/**
+ * W2 batch helper: upload several samples sequentially with one
+ * invalidation at the end. Returns per-file results so callers can
+ * surface partial failures without rolling back successes.
+ */
+export function useAddSamples() {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: async ({
+      profileId,
+      files,
+      referenceText,
+    }: {
+      profileId: string;
+      files: File[];
+      referenceText: string;
+    }) => {
+      const results: { file: File; ok: boolean; error?: string }[] = [];
+      for (const file of files) {
+        try {
+          await apiClient.addProfileSample(profileId, file, referenceText);
+          results.push({ file, ok: true });
+        } catch (error) {
+          results.push({
+            file,
+            ok: false,
+            error: error instanceof Error ? error.message : 'Upload failed',
+          });
+        }
+      }
+      return results;
+    },
+    onSuccess: (_, variables) => {
+      queryClient.invalidateQueries({
+        queryKey: ['profiles', variables.profileId, 'samples'],
+      });
+      queryClient.invalidateQueries({
+        queryKey: ['profiles', variables.profileId],
+      });
+    },
+  });
+}
+
 export function useDeleteSample() {
   const queryClient = useQueryClient();
 

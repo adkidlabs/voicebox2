@@ -36,8 +36,14 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Textarea } from '@/components/ui/textarea';
 import { useToast } from '@/components/ui/use-toast';
 import { AudioPreviewButton } from '@/components/VoiceProfiles/AudioPreviewButton';
+import { ConfidenceBadge } from '@/components/VoiceProfiles/ConfidenceBadge';
 import { apiClient } from '@/lib/api/client';
-import type { EffectConfig, PresetVoice, VoiceType } from '@/lib/api/types';
+import type {
+  EffectConfig,
+  PresetVoice,
+  SampleQualityResult,
+  VoiceType,
+} from '@/lib/api/types';
 import { LANGUAGE_CODES, LANGUAGE_OPTIONS, type LanguageCode } from '@/lib/constants/languages';
 import { useAudioPlayer } from '@/lib/hooks/useAudioPlayer';
 import { useAudioRecording } from '@/lib/hooks/useAudioRecording';
@@ -62,15 +68,16 @@ import { AudioSampleUpload } from './AudioSampleUpload';
 import { SampleList } from './SampleList';
 
 const MAX_AUDIO_DURATION_SECONDS = 30;
-const PRESET_ONLY_ENGINES = new Set(['kokoro', 'qwen_custom_voice']);
+const PRESET_ONLY_ENGINES = new Set(['kokoro', 'qwen_custom_voice', 'moss_tts_nano']);
 const DEFAULT_ENGINE_OPTIONS = [
   { value: 'qwen', label: 'Qwen3-TTS' },
   { value: 'qwen_custom_voice', label: 'Qwen CustomVoice' },
   { value: 'luxtts', label: 'LuxTTS' },
   { value: 'chatterbox', label: 'Chatterbox' },
   { value: 'chatterbox_turbo', label: 'Chatterbox Turbo' },
-  { value: 'tada', label: 'TADA' },
   { value: 'kokoro', label: 'Kokoro 82M' },
+  { value: 'moss_tts_nano', label: 'MOSS-TTS-Nano' },
+  { value: 'auk', label: 'AuK-Flash (Experimental)' },
 ] as const;
 
 function makeProfileSchema(t: (key: string) => string) {
@@ -162,6 +169,11 @@ export function ProfileForm() {
   const [profileEffectsChain, setProfileEffectsChain] = useState<EffectConfig[]>([]);
   const [effectsDirty, setEffectsDirty] = useState(false);
   const [defaultEngine, setDefaultEngine] = useState<string>('');
+  // W2 pre-flight quality: scored on selection, pure-warning, never blocking.
+  const [qualityResult, setQualityResult] = useState<SampleQualityResult | null>(null);
+  const [qualityPending, setQualityPending] = useState(false);
+  const [extraSampleFiles, setExtraSampleFiles] = useState<File[]>([]);
+  const [extraQuality, setExtraQuality] = useState<Record<string, SampleQualityResult>>({});
 
   const form = useForm<ProfileFormValues>({
     resolver: zodResolver(makeProfileSchema(t)),
@@ -222,6 +234,36 @@ export function ProfileForm() {
       form.clearErrors('sampleFile');
     }
   }, [selectedFile, form, t]);
+
+  // W2 pre-flight quality check on the chosen sample (pure-warning).
+  useEffect(() => {
+    if (!(selectedFile instanceof File)) {
+      setQualityResult(null);
+      setQualityPending(false);
+      return;
+    }
+    const file = selectedFile;
+    setQualityPending(true);
+    apiClient
+      .checkSampleQuality(file)
+      .then((result) => {
+        // Ignore stale responses if the user picked another file meanwhile.
+        if (form.getValues('sampleFile') === file) {
+          setQualityResult(result);
+        }
+      })
+      .catch((error) => {
+        console.error('Quality check failed:', error);
+        if (form.getValues('sampleFile') === file) {
+          setQualityResult(null);
+        }
+      })
+      .finally(() => {
+        if (form.getValues('sampleFile') === file) {
+          setQualityPending(false);
+        }
+      });
+  }, [selectedFile, form]);
 
   const {
     isRecording,
@@ -686,6 +728,29 @@ export function ProfileForm() {
             referenceText: referenceText,
           });
 
+          // W2 multi-sample: upload any extra dropped files as clone samples.
+          // Failures here are non-blocking — the profile + primary sample exist.
+          if (extraSampleFiles.length > 0) {
+            let extraFailed = 0;
+            for (const extra of extraSampleFiles) {
+              try {
+                await addSample.mutateAsync({
+                  profileId: profile.id,
+                  file: extra,
+                  referenceText: referenceText,
+                });
+              } catch {
+                extraFailed += 1;
+              }
+            }
+            if (extraFailed > 0) {
+              toast({
+                title: t('profileForm.toast.sampleFailed'),
+                description: `${extraFailed} additional sample(s) failed to upload.`,
+              });
+            }
+          }
+
           // Handle avatar upload if provided
           if (data.avatarFile) {
             try {
@@ -743,6 +808,9 @@ export function ProfileForm() {
       // Clear draft and reset form on success
       setProfileFormDraft(null);
       form.reset();
+      setExtraSampleFiles([]);
+      setExtraQuality({});
+      setQualityResult(null);
       setEditingProfileId(null);
       setOpen(false);
     } catch (error) {
@@ -899,6 +967,7 @@ export function ProfileForm() {
                               <SelectContent>
                                 <SelectItem value="kokoro">Kokoro 82M</SelectItem>
                                 <SelectItem value="qwen_custom_voice">Qwen CustomVoice</SelectItem>
+                                <SelectItem value="moss_tts_nano">MOSS-TTS-Nano</SelectItem>
                               </SelectContent>
                             </Select>
                           </FormItem>
@@ -1000,6 +1069,29 @@ export function ProfileForm() {
                                       audioDuration > MAX_AUDIO_DURATION_SECONDS
                                     }
                                     fieldName={name}
+                                    allowMultiple
+                                    onExtraFiles={(files) => {
+                                      setExtraSampleFiles((prev) => {
+                                        const known = new Set(
+                                          prev.map((f) => `${f.name}-${f.size}`),
+                                        );
+                                        const fresh = files.filter(
+                                          (f) => !known.has(`${f.name}-${f.size}`),
+                                        );
+                                        for (const f of fresh) {
+                                          const key = `${f.name}-${f.size}`;
+                                          apiClient
+                                            .checkSampleQuality(f)
+                                            .then((r) =>
+                                              setExtraQuality((q) => ({ ...q, [key]: r })),
+                                            )
+                                            .catch((err) =>
+                                              console.error('Quality check failed:', err),
+                                            );
+                                        }
+                                        return [...prev, ...fresh];
+                                      });
+                                    }}
                                   />
                                 )}
                               />
@@ -1049,6 +1141,68 @@ export function ProfileForm() {
                               </TabsContent>
                             )}
                           </Tabs>
+
+                          {isSampleBasedProfile && (
+                            <div className="space-y-2">
+                              <ConfidenceBadge result={qualityResult} pending={qualityPending} />
+                              {extraSampleFiles.length > 0 && (
+                                <div className="space-y-1 rounded-lg border border-border p-2">
+                                  <p className="text-xs font-medium">
+                                    {t('profileForm.quality.extraSamples', {
+                                      count: extraSampleFiles.length,
+                                    })}
+                                  </p>
+                                  <p className="text-xs text-muted-foreground">
+                                    {t('profileForm.quality.extraHint')}
+                                  </p>
+                                  <ul className="space-y-1">
+                                    {extraSampleFiles.map((f) => {
+                                      const key = `${f.name}-${f.size}`;
+                                      const q = extraQuality[key];
+                                      return (
+                                        <li
+                                          key={key}
+                                          className="flex items-center justify-between gap-2 text-xs"
+                                        >
+                                          <span className="truncate">{f.name}</span>
+                                          <span className="flex items-center gap-1">
+                                            {q ? (
+                                              <span className="text-muted-foreground">
+                                                {q.score}/100
+                                              </span>
+                                            ) : (
+                                              <span className="text-muted-foreground">…</span>
+                                            )}
+                                            <Button
+                                              type="button"
+                                              variant="ghost"
+                                              size="icon"
+                                              className="h-5 w-5"
+                                              aria-label={`Remove ${f.name}`}
+                                              onClick={() => {
+                                                setExtraSampleFiles((prev) =>
+                                                  prev.filter(
+                                                    (x) => `${x.name}-${x.size}` !== key,
+                                                  ),
+                                                );
+                                                setExtraQuality((qmap) => {
+                                                  const next = { ...qmap };
+                                                  delete next[key];
+                                                  return next;
+                                                });
+                                              }}
+                                            >
+                                              <X className="h-3 w-3" />
+                                            </Button>
+                                          </span>
+                                        </li>
+                                      );
+                                    })}
+                                  </ul>
+                                </div>
+                              )}
+                            </div>
+                          )}
 
                           <FormField
                             control={form.control}

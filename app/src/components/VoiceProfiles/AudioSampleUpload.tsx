@@ -14,6 +14,9 @@ interface AudioSampleUploadProps {
   isTranscribing?: boolean;
   isDisabled?: boolean;
   fieldName: string;
+  /** W2: when true, extra dropped/chosen files go to onExtraFiles as clone samples. */
+  allowMultiple?: boolean;
+  onExtraFiles?: (files: File[]) => void;
 }
 
 export function AudioSampleUpload({
@@ -26,10 +29,25 @@ export function AudioSampleUpload({
   isTranscribing = false,
   isDisabled = false,
   fieldName,
+  allowMultiple = false,
+  onExtraFiles,
 }: AudioSampleUploadProps) {
   const { t } = useTranslation();
   const [isDragging, setIsDragging] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
+
+  const handleFiles = (files: File[]) => {
+    const audioFiles = files.filter((f) => f.type.startsWith('audio/') || /\.(wav|mp3|m4a|ogg|flac|aac|webm|opus)$/i.test(f.name));
+    if (audioFiles.length === 0) return;
+    if (!file) {
+      onFileChange(audioFiles[0]);
+      if (audioFiles.length > 1) onExtraFiles?.(audioFiles.slice(1));
+    } else if (allowMultiple) {
+      onExtraFiles?.(audioFiles);
+    } else {
+      onFileChange(audioFiles[0]);
+    }
+  };
 
   return (
     <FormItem>
@@ -38,12 +56,13 @@ export function AudioSampleUpload({
           <input
             type="file"
             accept="audio/*"
+            multiple={allowMultiple}
             name={fieldName}
             ref={fileInputRef}
             onChange={(e) => {
-              const selectedFile = e.target.files?.[0];
-              if (selectedFile) {
-                onFileChange(selectedFile);
+              const chosen = Array.from(e.target.files ?? []);
+              if (chosen.length > 0) {
+                handleFiles(chosen);
               } else {
                 onFileChange(undefined);
               }
@@ -64,10 +83,7 @@ export function AudioSampleUpload({
             onDrop={(e) => {
               e.preventDefault();
               setIsDragging(false);
-              const droppedFile = e.dataTransfer.files?.[0];
-              if (droppedFile?.type.startsWith('audio/')) {
-                onFileChange(droppedFile);
-              }
+              handleFiles(Array.from(e.dataTransfer.files ?? []));
             }}
             onKeyDown={(e) => {
               if (e.key === 'Enter' || e.key === ' ') {
