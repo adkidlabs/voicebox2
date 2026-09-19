@@ -199,6 +199,29 @@ class PyTorchTTSBackend:
     ) -> Tuple[np.ndarray, str]:
         return await _combine_voice_prompts(audio_paths, reference_texts)
 
+    async def clone_from_multiple(
+        self,
+        audio_paths: List[str],
+        reference_texts: List[str],
+    ) -> dict:
+        """Build a multi-reference voice prompt (W2).
+
+        Uses qwen-tts' native batch prompt construction: one
+        VoiceClonePromptItem per sample (speaker embedding + speech codes).
+        ``generate_voice_clone`` conditions on all items jointly, which beats
+        naive waveform concatenation for multi-sample clones.
+        """
+        await self.load_model_async(None)
+
+        def _create_multi_sync():
+            return self.model.create_voice_clone_prompt(
+                ref_audio=[str(p) for p in audio_paths],
+                ref_text=list(reference_texts),
+                x_vector_only_mode=False,
+            )
+
+        return await asyncio.to_thread(_create_multi_sync)
+
     async def generate(
         self,
         text: str,
